@@ -1,3 +1,6 @@
 .idea
 .venv
 result*
+models/*
+EDSR*
+__pycache__/
