@@ -95,20 +95,22 @@ def upscale_ai(img: np.ndarray, scale: int = 2) -> np.ndarray:
     if scale not in (2, 3, 4):
         raise ValueError(f"AI upscaling only supports scale 2, 3, or 4. Got: {scale}")
 
-    model_name = f"EDSR_x{scale}.pb"
-    if not os.path.exists(model_name):
-        print(f"Downloading {model_name}...")
+    os.makedirs("models", exist_ok=True)
+    model_path = os.path.join("models", f"EDSR_x{scale}.pb")
+
+    if not os.path.exists(model_path):
+        print(f"Downloading EDSR_x{scale}.pb...")
         urllib.request.urlretrieve(
-            f"https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/{model_name}",
-            model_name
+            f"https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x{scale}.pb",
+            model_path
         )
 
     # EDSR expects uint8 BGR
-    img_uint8 = skimage.util.img_as_ubyte(img)
+    img_uint8 = skimage.util.img_as_ubyte(np.clip(img, 0.0, 1.0))
     img_bgr = img_uint8[:, :, ::-1]
 
     sr = dnn_superres.DnnSuperResImpl_create()
-    sr.readModel(model_name)
+    sr.readModel(model_path)
     sr.setModel("edsr", scale)
     upscaled_bgr = sr.upsample(img_bgr)
 
@@ -116,25 +118,25 @@ def upscale_ai(img: np.ndarray, scale: int = 2) -> np.ndarray:
     upscaled_rgb = upscaled_bgr[:, :, ::-1]
     return skimage.util.img_as_float(upscaled_rgb)
 
-def clahe_color_amplification(img: np.ndarray, amplification: float = 0.03) -> np.ndarray:
-
+def clahe_color_amplification(img: np.ndarray, amplification: float = 0.3) -> np.ndarray:
     img = np.clip(img.astype(np.float64), 0.0, 1.0)
-    img_lab = skimage.color.rgb2lab(img)
-    l_channel = np.clip(img_lab[:, :, 0] / 100.0, 0.0, 1.0)
 
-    l_enhanced = skimage.exposure.equalize_adapthist(
-        l_channel,
+    img_hsv = skimage.color.rgb2hsv(img)
+    v_channel = img_hsv[:, :, 2]  # Already [0.0, 1.0]
+
+    v_enhanced = skimage.exposure.equalize_adapthist(
+        v_channel,
         kernel_size=None,
-        clip_limit=amplification
+        clip_limit=0.03
     )
 
-    img_lab[:, :, 0] = l_enhanced * 100.0
-    img_lab[:, :, 0] = np.clip(img_lab[:, :, 0], 0.0, 100.0)
-    img_lab[:, :, 1] = np.clip(img_lab[:, :, 1], -128.0, 127.0)
-    img_lab[:, :, 2] = np.clip(img_lab[:, :, 2], -128.0, 127.0)
+    # Blend enhanced V with original to control intensity
+    img_hsv[:, :, 2] = np.clip(
+        (1.0 - amplification) * v_channel + amplification * v_enhanced,
+        0.0, 1.0
+    )
 
-    img_rgb = skimage.color.lab2rgb(img_lab)
-    return np.clip(img_rgb, 0.0, 1.0)
+    return np.clip(skimage.color.hsv2rgb(img_hsv), 0.0, 1.0)
 
 
 def gamma_correction(img: np.ndarray, gamma:float=0.7, amplitude:float=0.5):
@@ -201,6 +203,30 @@ def lcn_sharpening_skimage(img: np.ndarray, window_size: int = 15) -> np.ndarray
     return np.clip(result_rgb, 0.0, 1.0)
 
 
+def denoise_meanshift(img: np.ndarray, spatial_radius: int = 10, color_radius: float = 0.10) -> np.ndarray:
+    """
+    Mean shift filter — smooths background texture while preserving text edges.
+    :param img: RGB float64 [0.0, 1.0]
+    :param spatial_radius: How far spatially to look for similar pixels (in pixels)
+    :param color_radius: How similar in color pixels need to be to be grouped [0.0, 1.0]
+    :return: Filtered RGB float64 [0.0, 1.0]
+    """
+    import cv2
+
+    img_uint8 = skimage.util.img_as_ubyte(img)
+    img_bgr = img_uint8[:, :, ::-1]  # RGB -> BGR for OpenCV
+
+    # color_radius is [0,1] but OpenCV expects [0,255]
+    filtered_bgr = cv2.pyrMeanShiftFiltering(
+        img_bgr,
+        sp=spatial_radius,
+        sr=int(color_radius * 255)
+    )
+
+    filtered_rgb = filtered_bgr[:, :, ::-1]  # BGR -> RGB
+    return skimage.util.img_as_float(filtered_rgb)
+
+
 def denoise_image(img: np.ndarray, amplitude: float = 0.1) -> np.ndarray:
     # Estimate noise standard deviation from the image
     sigma_est = np.mean(skimage.restoration.estimate_sigma(img, channel_axis=-1))
@@ -211,11 +237,98 @@ def denoise_image(img: np.ndarray, amplitude: float = 0.1) -> np.ndarray:
                                                 channel_axis=-1
                                                 )
 
+
+def denoise_ai(img: np.ndarray, amplitude: float = 1.0) -> np.ndarray:
+    import torch
+    import torch.nn as nn
+    import urllib.request
+
+    class DnCNN(nn.Module):
+        def __init__(self, channels=3, num_layers=20):
+            super().__init__()
+            layers = []
+            for _ in range(num_layers - 1):
+                layers += [nn.Conv2d(channels if _ == 0 else 64, 64, 3, padding=1, bias=True), nn.ReLU(inplace=True)]
+            layers += [nn.Conv2d(64, channels, 3, padding=1, bias=True)]
+            self.model = nn.Sequential(*layers)
+
+        def forward(self, x):
+            return x - self.model(x)
+
+    os.makedirs("models", exist_ok=True)
+    model_path = os.path.join("models", "dncnn_color_blind.pth")
+
+    if not os.path.exists(model_path):
+        print("Downloading DnCNN color blind weights...")
+        urllib.request.urlretrieve(
+            "https://github.com/cszn/KAIR/releases/download/v1.0/dncnn_color_blind.pth",
+            model_path
+        )
+
+    state_dict = torch.load(model_path, map_location="cpu")
+
+    # KAIR state dict keys are prefixed with "module." when saved with DataParallel — strip if needed
+    state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+
+    model = DnCNN(channels=3)
+    model.load_state_dict(state_dict, strict=True)
+    model.eval()
+
+    img_f32 = img.astype(np.float32)
+    tensor = torch.from_numpy(img_f32.transpose(2, 0, 1)).unsqueeze(0)
+
+    with torch.no_grad():
+        denoised = model(tensor).squeeze(0).numpy().transpose(1, 2, 0)
+
+    blended = (1.0 - amplitude) * img + amplitude * denoised.astype(np.float64)
+    return np.clip(blended, 0.0, 1.0)
+
+
 def bilateral_denoise(img: np.ndarray, sigma_color: float = 0.05, sigma_spatial: float = 1.0) -> np.ndarray:
     return skimage.restoration.denoise_bilateral(img,
                                                   sigma_color=sigma_color,
                                                   sigma_spatial=sigma_spatial,
                                                   channel_axis=-1)
+
+
+def color_equalization(img: np.ndarray, clip_limit: float = 0.03) -> np.ndarray:
+    """
+    Equalizes luminance only (L channel in LAB space).
+    Colors are completely preserved, only brightness contrast is enhanced.
+    :param img: RGB float64 [0.0, 1.0]
+    :param clip_limit: CLAHE aggressiveness (0.01 subtle, 0.05 strong)
+    :return: RGB float64 [0.0, 1.0]
+    """
+    img = np.clip(img.astype(np.float64), 0.0, 1.0)
+    img_lab = skimage.color.rgb2lab(img)
+
+    l_channel = np.clip(img_lab[:, :, 0] / 100.0, 0.0, 1.0)
+    l_enhanced = skimage.exposure.equalize_adapthist(l_channel, clip_limit=clip_limit)
+
+    img_lab[:, :, 0] = np.clip(l_enhanced * 100.0, 0.0, 100.0)
+    return np.clip(skimage.color.lab2rgb(img_lab), 0.0, 1.0)
+
+
+def color_quantization(img: np.ndarray, n_colors: int = 12) -> np.ndarray:
+    """
+    Reduces the image to n_colors using K-means clustering.
+    Flattens background gradients into uniform regions so text stands out.
+    :param img: RGB float64 [0.0, 1.0]
+    :param n_colors: Number of distinct colors to keep (8-16 works well for maps)
+    :return: RGB float64 [0.0, 1.0]
+    """
+    import cv2
+
+    img_uint8 = skimage.util.img_as_ubyte(img)
+    pixels = img_uint8.reshape(-1, 3).astype(np.float32)
+
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
+    _, labels, centers = cv2.kmeans(
+        pixels, n_colors, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS
+    )
+
+    quantized = np.uint8(centers)[labels.flatten()].reshape(img_uint8.shape)
+    return skimage.util.img_as_float(quantized)
 
 
 def prepare_for_ocr(img: np.ndarray) -> np.ndarray:

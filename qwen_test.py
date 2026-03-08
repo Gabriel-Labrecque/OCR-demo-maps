@@ -8,30 +8,43 @@ import skimage.util
 import cv2
 from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
-from preprocessing import read_image, upscale_lanczos, upscale_ai
+import preprocessing as preprocess
 from PIL import Image
 
 os.environ["HF_HOME"] = "./models"
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 MODEL_ID = "Qwen/Qwen3-VL-2B-Instruct"
+MAX_UPSCALE_PIXELS = 10000 * 10000  # don't upscale if image exceeds this
 
 
 def upscale_image(img_array, method=None, scale=2):
     """
     method: None = no upscaling, 'lanczos' = Lanczos, 'ai' = EDSR
-    returns (upscaled_img as uint8, actual_scale_used)
+    returns (upscaled_img as float64 [0.0, 1.0], actual_scale_used)
     """
     if method is None:
-        return skimage.util.img_as_ubyte(img_array), 1
-    elif method == "lanczos":
-        upscaled = upscale_lanczos(img_array, scale)
+        return skimage.util.img_as_float(img_array), 1
+
+    h, w = img_array.shape[:2]
+    upscaled_pixels = (h * scale) * (w * scale)
+    if upscaled_pixels > MAX_UPSCALE_PIXELS:
+        print(f"Image too large to upscale ({w}x{h} * {scale} would exceed limit), skipping.")
+        return skimage.util.img_as_float(img_array), 1
+
+    if method == "lanczos":
+        return upscale_lanczos(img_array, scale), scale
     elif method == "ai":
-        upscaled = upscale_ai(img_array, scale)
+        return upscale_ai(img_array, scale), scale
     else:
         raise ValueError(f"Unknown upscale method: {method}. Use None, 'lanczos', or 'ai'.")
 
-    return skimage.util.img_as_ubyte(upscaled), scale
+def preprocess_image_for_qwen(img_array):
+
+    img, actual_scale = upscale_image(img, method=upscale_method, scale=upscale_scale)
+    img = preprocess.bilateral_denoise(img, sigma_color=0.025, sigma_spatial=10)
+    #img = preprocess.clahe_color_amplification(img, amplification=0.5)
+    #img = preprocess.color_quantization(img, n_colors=12)
 
 
 def parse_grounding_output(raw_text, img_width, img_height):
@@ -167,7 +180,7 @@ def process_images(upscale_method=None, upscale_scale=2):
         print(f"Processing {filename}...")
 
         img_array = read_image(img_path)  # float64 [0.0, 1.0]
-        upscaled, actual_scale = upscale_image(img_array, method=upscale_method, scale=upscale_scale)
+        img_array = preprocess_image_for_qwen(img_array, method=upscale_method, scale=upscale_scale)
 
         raw_text = run_ocr(model, processor, upscaled)
 

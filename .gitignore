@@ -4,3 +4,4 @@ result*
 models/*
 EDSR*
 __pycache__/
+input/*

@@ -9,11 +9,11 @@ SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 def upscale_image(img_array, method=None, scale=2):
     if method is None:
-        return skimage.util.img_as_ubyte(img_array), 1
+        return skimage.util.img_as_float(img_array), 1
     elif method == "lanczos":
-        return skimage.util.img_as_ubyte(preprocess.upscale_lanczos(img_array, scale)), scale
+        return preprocess.upscale_lanczos(img_array, scale), scale
     elif method == "ai":
-        return skimage.util.img_as_ubyte(preprocess.upscale_ai(img_array, scale)), scale
+        return preprocess.upscale_ai(img_array, scale), scale
     else:
         raise ValueError(f"Unknown upscale method: {method}. Use None, 'lanczos', or 'ai'.")
 
@@ -30,8 +30,10 @@ def preprocess_for_detection(img, upscale_method, upscale_scale):
         method=upscale_method,
         scale=upscale_scale
     )
-    img = preprocess.bilateral_denoise(img)
-    #img = preprocess.clahe_color_amplification(img, amplification=0.025)
+    img = preprocess.denoise_meanshift(img, spatial_radius=15, color_radius=0.075)
+    img = preprocess.denoise_ai(img, 1.0)
+    img = preprocess.clahe_color_amplification(img, amplification=0.1)
+    img = preprocess.color_equalization(img, clip_limit=0.01)
     img = preprocess.prepare_for_ocr(img)
     print("preprocessing ending...")
     return img, actual_scale
@@ -45,60 +47,18 @@ def save_preprocessed(img_array, img_path):
     print(f"Saved preprocessed: {output_path}")
 
 
-def boxes_overlap(box1, box2, threshold=0.3):
-    """Check if two quad boxes overlap significantly using bounding rect IoU."""
-    def bounding_rect(box):
-        pts = np.array(box)
-        x1, y1 = pts[:, 0].min(), pts[:, 1].min()
-        x2, y2 = pts[:, 0].max(), pts[:, 1].max()
-        return x1, y1, x2, y2
-
-    ax1, ay1, ax2, ay2 = bounding_rect(box1)
-    bx1, by1, bx2, by2 = bounding_rect(box2)
-
-    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
-    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-
-    if ix2 <= ix1 or iy2 <= iy1:
-        return False
-
-    intersection = (ix2 - ix1) * (iy2 - iy1)
-    area1 = (ax2 - ax1) * (ay2 - ay1)
-    area2 = (bx2 - bx1) * (by2 - by1)
-    union = area1 + area2 - intersection
-
-    return (intersection / union) > threshold
-
-
-def deduplicate_boxes(all_boxes, threshold=0.5):
-    """Remove overlapping boxes keeping the first occurrence."""
-    kept = []
-    for box in all_boxes:
-        if not any(boxes_overlap(box, kept_box, threshold=threshold) for kept_box in kept):
-            kept.append(box)
-    return kept
-
-
 def run_detection(reader, img_uint8):
     """
     Run EasyOCR detection with built-in rotation support.
     Returns deduplicated list of quad polygon boxes.
     """
-    results = reader.detect(img_uint8)
-
-    horizontal_boxes = results[0][0] if len(results[0]) > 0 else []
-    free_boxes = results[0][1] if len(results[0]) > 1 else []
+    results = reader.readtext(img_uint8, rotation_info=[90, 180, 270])
 
     quads = []
+    for bbox, text, confidence in results:
+        quads.append([[int(p[0]), int(p[1])] for p in bbox])
 
-    for box in horizontal_boxes:
-        x1, x2, y1, y2 = box[0], box[1], box[2], box[3]
-        quads.append([[x1, y1], [x2, y1], [x2, y2], [x1, y2]])
-
-    for box in free_boxes:
-        quads.append([[p[0], p[1]] for p in box])
-
-    return deduplicate_boxes(quads)
+    return quads
 
 
 def rescale_boxes(boxes, scale):
@@ -125,7 +85,7 @@ def draw_boxes(img_array, boxes, img_path, upscale_scale=1):
 
 def process_images(upscale_method=None, upscale_scale=2):
     print("Loading EasyOCR detector...")
-    reader = easyocr.Reader(['en', 'fr'], gpu=False, recognizer=False)
+    reader = easyocr.Reader(['en', 'fr'], gpu=False)
     print("Model ready.")
 
     for filename in os.listdir("input/"):
@@ -150,6 +110,6 @@ def process_images(upscale_method=None, upscale_scale=2):
 
 # ── entry point ───────────────────────────────────────────────────────────────
 process_images(
-    upscale_method="ai",
+    upscale_method="lanczos", # "lanczos", "ai" or None
     upscale_scale=2
 )
