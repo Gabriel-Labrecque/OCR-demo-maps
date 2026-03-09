@@ -1,0 +1,58 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  # Build-only service — never started by `docker compose up`.
+  # additional_contexts SHOULD let us build sequentially without needing to build ocr-base independently first.
+  ocr-base:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+      args:
+        UID: ${UID:-1000}
+    image: ocr-base
+
+  # Orchestrator for the OCR pipeline. Handles task distribution and coordination between workers.
+  ocr-worker:
+    build:
+      context: ./orchestrator
+      additional_contexts:
+        ocr-base: "service:ocr-base"
+    restart: unless-stopped
+    depends_on:
+      - redis
+    env_file: .dev.env
+    volumes:
+      - ./data/input:/data/input
+
+  # Handles reading and detecting text in images using the Florence2 model.
+  florence-worker:
+    build:
+      context: ./florence
+      additional_contexts:
+        ocr-base: "service:ocr-base"
+    restart: unless-stopped
+    depends_on:
+      - redis
+    env_file: .dev.env
+    volumes:
+      - ./data/input:/data/input
+      - ./data/intermediate:/data/intermediate
+      - ./models/florence:/app/models
+
+  # Handles refining Florence2's detections using the Qwen model.
+  qwen-worker:
+    build:
+      context: ./qwen
+      additional_contexts:
+        ocr-base: "service:ocr-base"
+    restart: unless-stopped
+    depends_on:
+      - redis
+    env_file: .dev.env
+    volumes:
+      - ./data/input:/data/input
+      - ./data/intermediate:/data/intermediate
+      - ./data/result:/data/result
+      - ./models/qwen:/app/models

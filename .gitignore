@@ -1,7 +1,0 @@
-.idea
-.venv
-result*
-models/*
-EDSR*
-__pycache__/
-input/*
