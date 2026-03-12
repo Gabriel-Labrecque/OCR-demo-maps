@@ -5,6 +5,7 @@ RUN pip install --no-cache-dir transformers
 
 COPY --chown=appuser:appuser . /app/qwen/
 
+
 USER appuser
 
 WORKDIR /app/qwen

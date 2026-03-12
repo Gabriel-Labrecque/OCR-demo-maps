@@ -25,6 +25,9 @@ import main as qwen
 
 @app.task(name="qwen.run_pipeline")
 def run_qwen(intermediate_json: str, image_path: str) -> str:
+
+    print(f"Received Qwen OCR task to process {image_path}")
+
     with open(intermediate_json, "r", encoding="utf-8") as f:
         florence_data = json.load(f)
 

@@ -5,7 +5,7 @@ from typing import Dict, List
 import cv2
 import numpy as np
 
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/data/result")
+OUTPUT_DIR = os.environ.get("INTERMEDIATE_DIR", "/data/intermediate")
 
 
 def quad_to_bbox_xyxy(quad: List[float]) -> List[int]:

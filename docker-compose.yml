@@ -23,8 +23,13 @@ services:
     depends_on:
       - redis
     env_file: .dev.env
+    ports:
+      - 8080:8080
     volumes:
       - ./data/input:/data/input
+      - ./data/intermediate:/data/intermediate
+      - ./data/result:/data/result
+      - ./models:/app/models
 
   # Handles reading and detecting text in images using the Florence2 model.
   florence-worker:
@@ -39,7 +44,8 @@ services:
     volumes:
       - ./data/input:/data/input
       - ./data/intermediate:/data/intermediate
-      - ./models/florence:/app/models
+      - ./data/result:/data/result
+      - ./models:/app/models
 
   # Handles refining Florence2's detections using the Qwen model.
   qwen-worker:
@@ -55,4 +61,4 @@ services:
       - ./data/input:/data/input
       - ./data/intermediate:/data/intermediate
       - ./data/result:/data/result
-      - ./models/qwen:/app/models
+      - ./models:/app/models

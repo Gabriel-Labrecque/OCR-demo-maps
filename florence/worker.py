@@ -23,6 +23,9 @@ app.conf.task_acks_late = True
 
 @app.task(name="florence.run_pipeline")
 def run_florence(image_path: str) -> str:
+
+    print(f"Received Florence OCR task to process {image_path}")
+
     config = florence.get_runtime_config()
     model, processor = florence.load_model_and_processor(config)
     result = florence.run_pipeline(model, processor, image_path, config)

@@ -1,6 +1,7 @@
 FROM python:3.12-slim
 
 ARG UID=1000
+ENV UID=${UID}
 RUN useradd -m -u ${UID} appuser
 
 WORKDIR /app
@@ -23,5 +24,5 @@ RUN pip install --no-cache-dir \
     scikit-image
 
 ENV HF_HOME=/app/models
-RUN mkdir -p /app/models/hub && chown appuser:appuser /app/models/hub
-VOLUME ["/app/models"]
+RUN mkdir -p /app/models/hub /app/models /data/result /data/input /data/intermediate && \
+    chown -R appuser:appuser /app/models/hub /app/models /data/result /data/input /data/intermediate

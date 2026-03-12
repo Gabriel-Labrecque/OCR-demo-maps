@@ -23,13 +23,15 @@ def run(image_path: str) -> str:
     Blocking here ensures --concurrency=1 prevents the next pipeline from
     starting before the current florence→qwen chain fully completes.
     """
+    print(f"Received OCR task to process {image_path}")
+
     # disable_sync_subtasks=False silences Celery's guard against calling .get()
     # inside a task. Safe here because the subtasks run in separate containers.
-    json_path = app.signature("florence.run_pipeline", args=[image_path]) \
+    out_path = app.signature("florence.run_pipeline", args=[image_path]) \
         .set(queue="florence").delay().get(disable_sync_subtasks=False)
 
-    out_path = app.signature("qwen.run_pipeline", args=[json_path, image_path]) \
-        .set(queue="qwen").delay().get(disable_sync_subtasks=False)
+    # out_path = app.signature("qwen.run_pipeline", args=[out_path, image_path]) \
+    #    .set(queue="qwen").delay().get(disable_sync_subtasks=False)
 
     return out_path
 
