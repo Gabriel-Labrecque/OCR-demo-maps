@@ -113,12 +113,37 @@ def tile_image(
         y += tile_size - overlap
     return tiles
 
+def get_image_context(model, processor, image, config):
+    context_prompt = "Describe the context of this map image."
+    inputs = processor(text=context_prompt, images=image, return_tensors="pt")
+    with torch.inference_mode():
+        generated_ids = model.generate(
+            input_ids=inputs["input_ids"],
+            pixel_values=inputs["pixel_values"],
+            max_new_tokens=256,
+            do_sample=False,
+            num_beams=3,
+        )
+    context_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+    return context_text
+
+def get_context_config() -> Dict:
+    """Config for Florence context generation."""
+    return {
+        "model_id": MODEL_ID,
+        "torch_dtype": torch.float32,
+        "device": "cpu",
+        "max_new_tokens": 256,  # Shorter output for context
+    }
 
 def run_pipeline(model, processor, image_path: str, config: Dict) -> Dict:
     """Pipeline for running Florence-2 OCR on a single image path."""
     
     preprocessed = manually_preprocess_image(image_path)
 
+    context = get_image_context(model, processor, preprocessed, get_context_config())
+    print(context)
+    
     # Cut tiles from image if exceeds max pixels, otherwise run on full image.
     tiles = tile_image(preprocessed)
     all_detections = []
