@@ -4,6 +4,7 @@ import gc
 import json
 
 from celery import Celery
+import main as florence
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
@@ -18,8 +19,6 @@ app = Celery(
 )
 app.conf.worker_prefetch_multiplier = 1
 app.conf.task_acks_late = True
-
-import main as florence
 
 
 @app.task(name="florence.run_pipeline")

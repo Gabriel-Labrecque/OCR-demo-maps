@@ -12,12 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Shared heavy dependencies
 RUN pip install --no-cache-dir \
-    torch \
+    torch
+
+RUN pip install --no-cache-dir \
     Pillow \
     numpy \
     accelerate \
     celery \
-    redis
+    redis \
+    scikit-image
 
 ENV HF_HOME=/app/models
+RUN mkdir -p /app/models/hub && chown appuser:appuser /app/models/hub
 VOLUME ["/app/models"]
