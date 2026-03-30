@@ -1,7 +1,7 @@
 FROM ocr-base
 
 # Qwen requires latest transformers
-RUN pip install --no-cache-dir transformers
+RUN pip install --no-cache-dir transformers opencv-python-headless
 
 COPY --chown=appuser:appuser . /app/qwen/
 

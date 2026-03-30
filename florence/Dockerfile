@@ -8,7 +8,7 @@ RUN pip install --no-cache-dir transformers==4.43.0 opencv-python-headless timm 
 COPY --chown=appuser:appuser . /app/florence/
 
 
-#USER appuser
+USER appuser
 
 WORKDIR /app/florence
 

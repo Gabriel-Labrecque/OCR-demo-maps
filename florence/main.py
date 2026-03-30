@@ -21,12 +21,12 @@ MAX_NEW_TOKENS = 4096
 TILE_SIZE = 1024
 TILE_OVERLAP = 64
 
-# Florence-2 uses task tokens instead of instruction prompts
+# Florence-2 uses task tokens instead of instruction
 OCR_TASK = "<OCR_WITH_REGION>"
 
 
 def get_runtime_config() -> Dict:
-    """Central config for model/runtime values used across the pipeline."""
+    """CPU mode for model."""
     return {
         "model_id": MODEL_ID,
         "torch_dtype": torch.float32,
@@ -166,6 +166,7 @@ def run_pipeline(model, processor, image_path: str, config: Dict) -> Dict:
 
     return {
         "image_size": {"width": preprocessed.width, "height": preprocessed.height},
+        "context": context,
         "detections": all_detections,
     }
 

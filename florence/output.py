@@ -5,9 +5,6 @@ from typing import Dict, List
 import cv2
 import numpy as np
 
-OUTPUT_DIR = os.environ.get("INTERMEDIATE_DIR", "/data/intermediate")
-
-
 def quad_to_bbox_xyxy(quad: List[float]) -> List[int]:
     """Convert Florence quad_box [x1,y1,x2,y2,x3,y3,x4,y4] to axis-aligned bbox_xyxy."""
     xs = quad[0::2]
@@ -51,15 +48,15 @@ def deduplicate_detections(detections: List[Dict], containment_threshold: float 
     return [det for k, det in enumerate(detections) if k not in suppressed]
 
 
-def save_result(image_path: str, parsed: Dict) -> None:
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+def save_result(image_path: str, intermediate_path: str, parsed: Dict) -> None:
+
     base, ext = os.path.splitext(os.path.basename(image_path))
 
-    # Save JSON
-    json_path = os.path.join(OUTPUT_DIR, f"{base}-florence-ocr.json")
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(parsed, f, ensure_ascii=False, indent=2)
-    print(f"Saved: {json_path}")
+    # Save JSON with context
+    parsed_with_context = dict(parsed)
+    with open(intermediate_path, "w", encoding="utf-8") as f:
+        json.dump(parsed_with_context, f, ensure_ascii=False, indent=2)
+    print(f"Saved: {intermediate_path}")
 
     # Draw bboxes on the raw input image
     img = cv2.imread(image_path)
@@ -78,6 +75,6 @@ def save_result(image_path: str, parsed: Dict) -> None:
             continue
         cv2.putText(img, det["text"], (label_x, label_y),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
-    bbx_path = os.path.join(OUTPUT_DIR, f"{base}-bbx{ext}")
+    bbx_path = os.path.splitext(intermediate_path)[0] + f"-bbx{ext}"
     cv2.imwrite(bbx_path, img)
     print(f"Saved: {bbx_path}")

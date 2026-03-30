@@ -11,3 +11,4 @@ CMD bash -c "\
     python3 -u -m celery -A worker worker --loglevel=info --concurrency=1 --queues=ocr & \
     python3 -u -m uvicorn http_server:app --host 0.0.0.0 --port 8080 \
     "
+    

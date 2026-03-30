@@ -1,9 +1,5 @@
 import os
-import sys
 import json
-import time
-import argparse
-from typing import Dict, List
 
 import torch
 from PIL import Image
@@ -12,14 +8,12 @@ from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 # Minimal, from-scratch baseline.
 MODEL_ID = "Qwen/Qwen3-VL-2B-Instruct"
-INPUT_DIR = os.environ.get("INPUT_DIR", "/data/input")
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/data/result")
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 MAX_NEW_TOKENS = 1024
 MAX_IMAGE_PIXELS = 2560 * 2560
 
 
-def get_runtime_config() -> Dict:
+def get_runtime_config():
     """Central config for model/runtime values used across the pipeline."""
     return {
         "model_id": MODEL_ID,
@@ -30,28 +24,7 @@ def get_runtime_config() -> Dict:
     }
 
 
-def list_input_images(input_dir: str) -> List[str]:
-    if not os.path.isdir(input_dir):
-        return []
-    files = []
-    for name in sorted(os.listdir(input_dir)):
-        if os.path.splitext(name)[1].lower() in SUPPORTED_EXTENSIONS:
-            files.append(os.path.join(input_dir, name))
-    return files
-
-
-def build_context_prompt() -> str:
-    """Prompt used on the full image to extract geographic/thematic context before OCR."""
-    return (
-        "You are analyzing a historical or geographical map. "
-        "Describe its context in one or two short sentences: identify the region, time period, "
-        "and main theme if visible (e.g. political borders, climate, population, military). "
-        "Do not describe visual style, only factual content. "
-        "Output plain text only, no formatting."
-    )
-
-
-def build_cleaning_prompt(detections: List[Dict], context: str = "") -> str:
+def build_cleaning_prompt(detections, context = ""):
     """
     Prompt used to clean and post-process Florence OCR detections.
     The model receives the original image for visual grounding, the context string from
@@ -64,7 +37,7 @@ def build_cleaning_prompt(detections: List[Dict], context: str = "") -> str:
          (e.g. split words across tiles): keep the leftmost bbox, extend it to cover both.
       4. Merge vertically adjacent boxes that continue the same label:
          join their text with \\n and extend the bbox to cover both.
-      5. Use geographic/historical context to correct plausible misreads
+      5. Use given geographic/historical context to correct plausible misreads
          (e.g. "Rivière Chauot" → "Rivière Chaudière" on a 1755 Quebec map).
     """
     detections_json = json.dumps(detections, ensure_ascii=False)
@@ -91,7 +64,7 @@ def build_cleaning_prompt(detections: List[Dict], context: str = "") -> str:
 
 
 
-def build_ocr_messages(image: Image.Image, prompt: str, processor) -> Dict:
+def build_ocr_messages(image, prompt, processor):
     """Generic prompt input builder: builds messages, applies chat template, and returns processor inputs."""
     messages = [
         {
@@ -115,7 +88,7 @@ def build_ocr_messages(image: Image.Image, prompt: str, processor) -> Dict:
     )
 
 
-def load_model_and_processor(config: Dict):
+def load_model_and_processor(config):
     print("Loading model...")
     model = Qwen3VLForConditionalGeneration.from_pretrained(
         config["model_id"],
@@ -133,9 +106,9 @@ def load_model_and_processor(config: Dict):
 
 
 def run_inference(
-    model, processor, image: Image.Image, prompt: str,
-    config: Dict, skip_special_tokens: bool = False
-) -> str:
+    model, processor, image, prompt,
+    config, skip_special_tokens = False
+):
     """Runs model inference on a pre-loaded PIL image with the given prompt."""
 
     inputs = build_ocr_messages(image, prompt, processor)
@@ -153,71 +126,65 @@ def run_inference(
     )[0]
 
 
-
-
-def parse_json_or_empty(raw_text: str) -> Dict:
-    raw = raw_text.strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        try:
-            return json.loads(raw[start : end + 1])
-        except json.JSONDecodeError:
-            pass
-    return {"detections": []}
-
-
-def save_result(image_path: str, image_size: Dict, detections: List[Dict]) -> None:
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    base = os.path.splitext(os.path.basename(image_path))[0]
-    out_path = os.path.join(OUTPUT_DIR, f"{base}-qwen-cleaned.json")
-    payload = {"image_size": image_size, "detections": detections}
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    print(f"Saved: {out_path}")
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Qwen OCR cleaner for Florence-2 output.")
-    parser.add_argument("--json", required=True, help="Path to the Florence-2 OCR JSON file.")
-    parser.add_argument("--image", required=True, help="Path to the original map image.")
-    args = parser.parse_args()
-
-    with open(args.json, "r", encoding="utf-8") as f:
-        florence_data = json.load(f)
-
-    image_size = florence_data.get("image_size", {})
-    detections = florence_data.get("detections", [])
-    image = Image.open(args.image).convert("RGB")
-
-    # Downscale image for context pass if too large
+def get_image_for_qwen(input_path: str, image_size: dict) -> Image.Image:
+    
+    image = Image.open(input_path).convert("RGB")
     w, h = image.size
     if w * h > MAX_IMAGE_PIXELS:
         scale = (MAX_IMAGE_PIXELS / (w * h)) ** 0.5
         image = image.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
 
-    start = time.time()
-    config = get_runtime_config()
-    model, processor = load_model_and_processor(config)
+    return image
 
-    print("Running context pass...")
-    context = run_inference(
-        model, processor, image, build_context_prompt(), config, skip_special_tokens=True
-    ).strip()
-    print(f"  Context: {context}")
+    
+def parse_json_or_empty(raw_text):
+    raw = raw_text.strip()
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                obj = json.loads(raw[start : end + 1])
+            except json.JSONDecodeError:
+                return []
+        else:
+            return []
+    # If obj is a dict with 'detections', return that, else if it's a list, return it, else []
+    if isinstance(obj, dict) and "detections" in obj and isinstance(obj["detections"], list):
+        return obj["detections"]
+    elif isinstance(obj, list):
+        return obj
+    else:
+        return []
 
-    print(f"Running cleaning pass on {len(detections)} detections...")
-    prompt = build_cleaning_prompt(detections, context)
-    raw = run_inference(model, processor, image, prompt, config)
-    cleaned = parse_json_or_empty(raw)
 
-    save_result(args.image, image_size, cleaned.get("detections", []))
-    print(f"Total time: {time.time() - start:.2f}s")
+def save_result(image_path, output_path, result):
+    """
+    Save the cleaned Qwen results to output_path (JSON) and output a -bbx image with bboxes drawn, matching Florence's output.py.
+    result: dict with keys 'image_size', 'detections', and optionally 'context'.
+    """
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    print(f"Saved: {output_path}")
+
+    # Draw bboxes on the raw input image
+    img = cv2.imread(image_path)
+    ext = os.path.splitext(image_path)[1]
+    for det in result.get("detections", []):
+        bbox = det.get("bbox_xyxy", [])
+        if len(bbox) == 4:
+            x1, y1, x2, y2 = bbox
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 1)
+            label_x, label_y = x1, max(y1 - 4, 0)
+        else:
+            continue
+        cv2.putText(img, det["text"], (label_x, label_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
+    bbx_path = os.path.splitext(output_path)[0] + f"-bbx{ext}"
+    cv2.imwrite(bbx_path, img)
+    print(f"Saved: {bbx_path}")
 
 
-if __name__ == "__main__":
-    main()

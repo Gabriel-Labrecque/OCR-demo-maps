@@ -46,3 +46,21 @@ def bilateral_denoise(img: np.ndarray, sigma_color: float = 0.05, sigma_spatial:
                                                   sigma_color=sigma_color,
                                                   sigma_spatial=sigma_spatial,
                                                   channel_axis=-1)
+
+def clahe_color_amplification(img: np.ndarray, amplification: float = 0.03) -> np.ndarray:
+
+
+    # Extract L and normalize to [0.0, 1.0] for the CLAHE
+    img_lab = skimage.color.rgb2lab(img)
+    l_channel = img_lab[:, :, 0] / 100.0
+
+    # Apply CLAHE
+    l_enhanced = skimage.exposure.equalize_adapthist(
+        l_channel,
+        kernel_size=(8, 8),
+        clip_limit=amplification
+    )
+
+    img_lab[:, :, 0] = l_enhanced * 100.0
+    img_rgb = skimage.color.lab2rgb(img_lab)
+    return np.clip(img_rgb, 0.0, 1.0)

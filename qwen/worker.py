@@ -1,16 +1,12 @@
 import os
-import sys
 import gc
 import json
 
 from celery import Celery
 from PIL import Image
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BASE_DIR)
+import main as qwen
 
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/data/result")
-QWEN_OUTPUT_SUFFIX = os.environ.get("QWEN_OUTPUT_SUFFIX", "-qwen-cleaned")
 os.environ.setdefault("HF_HOME", "/app/models")
 
 app = Celery(
@@ -20,21 +16,33 @@ app = Celery(
 app.conf.worker_prefetch_multiplier = 1
 app.conf.task_acks_late = True
 
-import main as qwen
-
 
 @app.task(name="qwen.run_pipeline")
-def run_qwen(intermediate_json: str, image_path: str) -> str:
+def run_qwen(florence_result: bool, input_path: str, intermediate_path: str, output_path: str) -> str:
+    """
+    input_path: absolute path to the image (.png, .jpg, etc)
+    intermediate_path: absolute path to the Florence JSON
+    output_path: absolute path to the resulting Qwen JSON
+    """
+    print(f"Received Qwen OCR task to process image: {input_path}\nFlorence JSON: {intermediate_path}\nOutput JSON: {output_path}")
 
-    print(f"Received Qwen OCR task to process {image_path}")
+    if not florence_result:
+        print("Florence OCR task failed. Skipping Qwen processing.")
+        return "florence_failed"
 
-    with open(intermediate_json, "r", encoding="utf-8") as f:
+    # Load Florence JSON
+    with open(intermediate_path, "r", encoding="utf-8") as f:
         florence_data = json.load(f)
 
     image_size = florence_data.get("image_size", {})
+    context = florence_data.get("context", "")
     detections = florence_data.get("detections", [])
+    # Resizing image
+    image = qwen.get_image_for_qwen(input_path, image_size)
 
-    image = Image.open(image_path).convert("RGB")
+    # Load image and resize if too large for Qwen. Precision loss should be minimal since we
+    # only need a general understanding of the layout for the cleaning pass.
+    image = Image.open(input_path).convert("RGB")
     w, h = image.size
     if w * h > qwen.MAX_IMAGE_PIXELS:
         scale = (qwen.MAX_IMAGE_PIXELS / (w * h)) ** 0.5
@@ -43,34 +51,26 @@ def run_qwen(intermediate_json: str, image_path: str) -> str:
     config = qwen.get_runtime_config()
     model, processor = qwen.load_model_and_processor(config)
 
-    context = qwen.run_inference(
-        model, processor, image, qwen.build_context_prompt(),
-        config, skip_special_tokens=True,
-    ).strip()
-    print(f"[Qwen] Context: {context}")
-
+    # Build qwen prompt
     prompt = qwen.build_cleaning_prompt(detections, context)
-    raw = qwen.run_inference(model, processor, image, prompt, config)
-    cleaned = qwen.parse_json_or_empty(raw)
+    print(f"Running Qwen inference with built prompt")
+    raw_result = qwen.run_inference(model, processor, image, prompt, config)
+    print(f"Raw Qwen result: {raw_result}")
+
+    # Format answers and dump as JSON.
+    detections = qwen.parse_json_or_empty(raw_result)
 
     del model, processor
     gc.collect()
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    base = os.path.splitext(os.path.basename(image_path))[0]
-    out_path = os.path.join(OUTPUT_DIR, f"{base}{QWEN_OUTPUT_SUFFIX}.json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump({"image_size": image_size, "detections": cleaned.get("detections", [])},
-                  f, ensure_ascii=False, indent=2)
-    print(f"[Qwen] Saved: {out_path}")
+    # Use save_result from main.py for consistent output
+    qwen.save_result(input_path,
+                     output_path,
+                     {"image_size": image.size, "detections": detections, "context": context}
+                     )
+    print(f"[Qwen] Saved: {output_path}")
 
-    try:
-        os.remove(intermediate_json)
-        print(f"[Qwen] Cleaned up: {intermediate_json}")
-    except OSError as e:
-        print(f"[Qwen] Warning: could not remove intermediate file: {e}")
-
-    return out_path
+    return output_path
 
 
 if __name__ == "__main__":

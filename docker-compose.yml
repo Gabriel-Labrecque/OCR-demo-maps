@@ -3,8 +3,6 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
 
-  # Build-only service — never started by `docker compose up`.
-  # additional_contexts SHOULD let us build sequentially without needing to build ocr-base independently first.
   ocr-base:
     build:
       context: .
