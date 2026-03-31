@@ -1,6 +1,6 @@
 import os
 import json
-
+import cv2
 import torch
 from PIL import Image
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
@@ -9,7 +9,7 @@ from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 # Minimal, from-scratch baseline.
 MODEL_ID = "Qwen/Qwen3-VL-2B-Instruct"
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
-MAX_NEW_TOKENS = 1024
+MAX_NEW_TOKENS = 512
 MAX_IMAGE_PIXELS = 2560 * 2560
 
 
@@ -26,37 +26,19 @@ def get_runtime_config():
 
 def build_cleaning_prompt(detections, context = ""):
     """
-    Prompt used to clean and post-process Florence OCR detections.
-    The model receives the original image for visual grounding, the context string from
-    the first pass, and the raw detection list serialized as JSON.
-
-    Cleaning rules applied by the model:
-      1. Remove single-letter words (likely artifacts).
-      2. Fix OCR artifacts in words (e.g. noise characters, broken glyphs).
-      3. Merge horizontally adjacent boxes that form a logical continuation
-         (e.g. split words across tiles): keep the leftmost bbox, extend it to cover both.
-      4. Merge vertically adjacent boxes that continue the same label:
-         join their text with \\n and extend the bbox to cover both.
-      5. Use given geographic/historical context to correct plausible misreads
-         (e.g. "Rivière Chauot" → "Rivière Chaudière" on a 1755 Quebec map).
+    Prompt for cleaning and merging OCR detections from Florence.
+    The model receives the map context and a list of detections (text + bbox).
     """
     detections_json = json.dumps(detections, ensure_ascii=False)
     context_line = f"Map context: {context}\n" if context else ""
     return (
         f"{context_line}"
-        "You are a post-processing assistant for OCR results on historical and geographical maps.\n"
-        "Below is a list of raw OCR detections from Florence-2, each with a text label and a "
-        "bounding box [x1, y1, x2, y2] in image pixel coordinates.\n"
-        "Clean the detection list by applying ALL of the following rules:\n"
-        "1. Fix OCR artifacts within words (stray characters, broken accents, garbled glyphs).\n"
-        "2. Horizontally adjacent detections that form a logical word or phrase continuation "
-        "(including words split by a tile boundary, e.g. 'Océan Atl' + 'Atlantique' being 'Océan Atlantique') "
-        "must be merged into one detection. Use the merged text and a bbox that spans both originals.\n"
-        "3. Vertically adjacent detections that continue the same multi-line label must be merged: "
-        "Join their texts with \\n and extend the bbox to cover both.\n"
-        "4. Use the map context and geographic/historical knowledge to correct plausible misreads "
-        "(e.g. 'Rivière Chauot' is probably 'Rivière Chaudière' on a Quebec 1755 map, if you correctly geolocalize it). "
-        "Correct when you are sufficiently confident; otherwise keep the original text.\n"
+        "You are an expert at cleaning OCR results from historical and geographical maps.\n"
+        "Below is a list of OCR detections, each with a text label and a bounding box [x1, y1, x2, y2] in image pixel coordinates.\n"
+        "Your tasks:\n"
+        "1. Merge boxes where the text is spatially close (distance between boxes is small) and the words contextually belong together (e.g., split phrases like 'STATE OF' and 'MICHIGAN' should be merged into 'STATE OF MICHIGAN').\n"
+        "2. Remove artifacts such as HTML tags, stray or noise characters, and any text that is a single letter (unless it is a valid abbreviation or part of a larger word).\n"
+        "3. Use the map context to help decide which boxes should be merged and to correct plausible misreads.\n"
         "Return ONLY valid JSON with this schema, no extra text:\n"
         '{"detections":[{"text":str,"bbox_xyxy":[int,int,int,int]}]}\n'
         f"Raw detections:\n{detections_json}"
@@ -94,12 +76,14 @@ def load_model_and_processor(config):
         config["model_id"],
         torch_dtype=config["torch_dtype"],
         trust_remote_code=True,
+        local_files_only=True,
     ).to(config["device"])
 
     processor = AutoProcessor.from_pretrained(
         config["model_id"],
         trust_remote_code=True,
         max_pixels=config["max_image_pixels"],
+        local_files_only=True,
     )
     print("Model ready.")
     return model, processor
@@ -124,17 +108,6 @@ def run_inference(
         skip_special_tokens=skip_special_tokens,
         clean_up_tokenization_spaces=False,
     )[0]
-
-
-def get_image_for_qwen(input_path: str, image_size: dict) -> Image.Image:
-    
-    image = Image.open(input_path).convert("RGB")
-    w, h = image.size
-    if w * h > MAX_IMAGE_PIXELS:
-        scale = (MAX_IMAGE_PIXELS / (w * h)) ** 0.5
-        image = image.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-
-    return image
 
     
 def parse_json_or_empty(raw_text):

@@ -38,7 +38,7 @@ def run_qwen(florence_result: bool, input_path: str, intermediate_path: str, out
     context = florence_data.get("context", "")
     detections = florence_data.get("detections", [])
     # Resizing image
-    image = qwen.get_image_for_qwen(input_path, image_size)
+    image = Image.open(input_path).convert("RGB")
 
     # Load image and resize if too large for Qwen. Precision loss should be minimal since we
     # only need a general understanding of the layout for the cleaning pass.
