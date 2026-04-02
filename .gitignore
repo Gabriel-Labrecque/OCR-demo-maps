@@ -3,6 +3,6 @@
 .idea
 .venv
 models
-data/*
+data
 __pycache__
 *.log

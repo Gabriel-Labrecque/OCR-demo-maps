@@ -159,9 +159,9 @@ def run_pipeline(model, processor, image_path: str, config: Dict) -> Dict:
             bbox = out.quad_to_bbox_xyxy(quad)
             # Offset tile-local coords to full-image space
             bbox = [bbox[0] + x1, bbox[1] + y1, bbox[2] + x1, bbox[3] + y1]
-            quad_full = [quad[i] + (x1 if i % 2 == 0 else y1) for i in range(8)]
-            all_detections.append({"text": text, "bbox_xyxy": bbox, "quad": quad_full})
+            all_detections.append({"text": text, "bbox_xyxy": bbox})
 
+    all_detections = out.merge_related_detections(all_detections)
     all_detections = out.deduplicate_detections(detections=all_detections, containment_threshold=0.85)
 
     return {

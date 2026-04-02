@@ -17,6 +17,36 @@ app.conf.worker_prefetch_multiplier = 1
 app.conf.task_acks_late = True
 
 
+def _normalize_image_size(image_size_value, fallback_image):
+    """Return image_size as {'width': int, 'height': int} to match intermediate JSON format."""
+    if isinstance(image_size_value, dict):
+        w = int(image_size_value.get("width", fallback_image.size[0]))
+        h = int(image_size_value.get("height", fallback_image.size[1]))
+        return {"width": w, "height": h}
+    if isinstance(image_size_value, (list, tuple)) and len(image_size_value) == 2:
+        return {"width": int(image_size_value[0]), "height": int(image_size_value[1])}
+    return {"width": int(fallback_image.size[0]), "height": int(fallback_image.size[1])}
+
+
+def _strip_quad_fields(detections):
+    """Keep qwen output aligned with florence format minus quad boxes."""
+    cleaned = []
+    for det in detections or []:
+        if not isinstance(det, dict):
+            continue
+        text = det.get("text", "")
+        bbox = det.get("bbox_xyxy", [])
+        if not isinstance(bbox, list) or len(bbox) != 4:
+            continue
+        cleaned.append(
+            {
+                "text": text,
+                "bbox_xyxy": [int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])],
+            }
+        )
+    return cleaned
+
+
 @app.task(name="qwen.run_pipeline")
 def run_qwen(florence_result: bool, input_path: str, intermediate_path: str, output_path: str) -> str:
     """
@@ -58,7 +88,8 @@ def run_qwen(florence_result: bool, input_path: str, intermediate_path: str, out
     print(f"Raw Qwen result: {raw_result}")
 
     # Format answers and dump as JSON.
-    detections = qwen.parse_json_or_empty(raw_result)
+    detections = _strip_quad_fields(qwen.parse_json_or_empty(raw_result))
+    image_size = _normalize_image_size(image_size, image)
 
     del model, processor
     gc.collect()
@@ -66,7 +97,7 @@ def run_qwen(florence_result: bool, input_path: str, intermediate_path: str, out
     # Use save_result from main.py for consistent output
     qwen.save_result(input_path,
                      output_path,
-                     {"image_size": image.size, "detections": detections, "context": context}
+                     {"image_size": image_size, "detections": detections, "context": context}
                      )
     print(f"[Qwen] Saved: {output_path}")
 
